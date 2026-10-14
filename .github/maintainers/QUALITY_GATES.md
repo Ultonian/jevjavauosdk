@@ -128,8 +128,8 @@ after inactivity. Check Actions periodically; absence of mail is not a health si
 `artifact:check-buildplan` runs during ordinary validation. Artifact Plugin 3.6.1 is pinned:
 3.7.0 overwrites the plugin-failure flag with its dependency-range result, logging errors without
 failing. The deliberate old-JAR-plugin fixture must fail before removing this pin. It checks known plugin reproducibility
-problems; it does not prove byte-identical artifacts. The release rehearsal must compare two clean
-builds using `artifact:compare` on the actual release bundle.
+problems; it does not prove byte-identical artifacts. The release rehearsal and the candidate
+workflow compare two clean builds of the actual bundle with `scripts/release_bundle.py compare`.
 
 `-Prelease-checks` enforces a release version, release dependencies, no dynamic dependency versions
 and valid profile IDs. It intentionally rejects the development snapshot. The separate SBOM profile
@@ -141,6 +141,6 @@ can be exercised before selecting a release version:
 
 The aggregate `target/bom.json` includes published libraries and compile/runtime dependencies,
 including test helpers but excluding JUnit, examples and benchmark dependencies. It is evidence,
-not attached for deployment yet. Signed bundles, exact-artifact SBOM validation, reproducibility
-comparison, Central attachment rehearsal and promotion remain in the
-[release implementation](RELEASING.md).
+not attached for deployment. Signed bundles, exact-artifact SBOM validation, reproducibility
+comparison, isolated consumers and the Portal promotion path are described in
+[RELEASING](RELEASING.md#publishing-setup).

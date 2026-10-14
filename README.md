@@ -79,6 +79,10 @@ Maven coordinates, class names and behavior are unchanged by the package moves. 
 The library JARs reserve automatic-module names `net.codefinch.jev`, `net.codefinch.jev.test`
 and `net.codefinch.jev.micrometer`. They can also be used on the classpath. Automatic modules
 export all packages; the internal package remains unsupported rather than being hidden by JPMS.
+Because automatic modules declare no dependencies, a module-path application must resolve the
+SDK's own requirements itself: `requires java.net.http;` (or `--add-modules java.net.http`) and
+either `requires com.fasterxml.jackson.databind;` or `--add-modules ALL-MODULE-PATH` for Jackson
+and Micrometer. The release checks run a consumer both ways on JDK 21 and 25.
 
 ### Create a client
 

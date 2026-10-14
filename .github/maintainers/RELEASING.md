@@ -1,16 +1,17 @@
 # Release strategy
 
-The first proposed release is `0.1.0`. The checks below are the release contract; candidate bundle
-and promotion automation are not implemented yet. Do not treat a normal `verify` build as a
-publishable release or tag before those prerequisites are complete.
+The first proposed release is `0.1.0`. The checks below are the release contract. The candidate and
+promotion workflows exist and are rehearsed locally, but no deployment has yet been sent to the
+Central Portal: the first real upload is an external action that still has to be observed. Do not
+treat a normal `verify` build as a publishable release or tag before the prerequisites are complete.
 
 ## Before cutting a release branch
 
 - Finish the agreed API, documentation and quality-gate work on `main`; record a green CI commit.
 - Verify repository protections, security monitoring and the private reporting channel using the
   owner account. Local scanner results do not establish GitHub settings.
-- Complete the [publishing setup](#publishing-setup-to-implement-before-the-cut), including an
-  unpublished signed bundle rehearsal, exact module checks and isolated consumers.
+- Run the [local rehearsal](#publishing-setup) on the intended commit: an unpublished signed
+  bundle, exact module checks, reproducibility and isolated consumers.
 - Confirm Central namespace access and release-environment credentials without placing secrets
   in source, build logs or evidence archives.
 - Record who approves the candidate and where the immutable artifacts and qualification results
@@ -59,19 +60,26 @@ stable tags against replacement or deletion.
 2. **Prepare:** on the release branch, set the final Maven version (`0.1.0`), finalize the
    changelog (date the release and add its tag/compare links), the README dependency version and SCM metadata, and set a fixed reproducible-build timestamp.
    Build from a clean committed checkout on a pinned JDK 21 distribution and patch version.
-3. **Archive:** build and sign one publication bundle. Identify it as candidate 1 using its full
-   commit SHA, workflow run ID and SHA-256 hashes. Retain the exact SDK artifacts, benchmark JAR,
-   source archive and build logs. A candidate is an internal label, not a public Maven version
-   or stable Git tag.
+3. **Archive:** dispatch the **Release candidate** workflow on the release branch with an exact
+   Temurin 21 patch version. It builds and signs one publication bundle, rebuilds to prove the
+   bundle reproducible, checks its exact contents, runs isolated consumers on JDK 21 and 25 and
+   retains `candidate-<version>-<commit>` (bundle, SBOM, `manifest.json`, logs) for 90 days.
+   The manifest's commit SHA, workflow run ID and SHA-256 hashes identify candidate 1. Copy the
+   artifact to durable storage together with the benchmark JAR and source archive. A candidate is
+   an internal label, not a public Maven version or stable Git tag.
 4. **Qualify:** complete the checks and benchmark protocol below against that candidate.
    Any change to released code, dependencies or packaging creates a new candidate and resets
    qualification. Retain failed candidates and their results for diagnosis.
-5. **Validate with Central:** upload the qualified bundle as a user-managed deployment and wait
-   for validation. Record its deployment ID. Validation does not publish it; the Portal supports
-   a separate promotion operation. See the [Publisher API](https://central.sonatype.org/publish/publish-portal-api/).
-6. **Release:** review the evidence, create the annotated `v0.1.0` tag at the exact candidate
-   commit, then explicitly authorize publication of that validated deployment. Verify the tag,
-   commit, version and bundle hashes agree. Publish the existing bundle without rebuilding it.
+5. **Tag and validate with Central:** create the annotated `v0.1.0` tag at the exact candidate
+   commit, then dispatch **Release promotion** with the tag, the candidate run ID and step
+   `validate`. It verifies the tag commit, version and bundle hash against the manifest, re-checks
+   the bundle, uploads it as a `USER_MANAGED` deployment, waits for Portal validation and retains
+   the deployment ID as artifact `deployment-<tag>`. Validation does not publish. See the
+   [Publisher API](https://central.sonatype.org/publish/publish-portal-api/).
+6. **Release:** review the evidence, then dispatch **Release promotion** again with step `publish`.
+   The release environment's required reviewers approve each dispatch. It resumes from the
+   recorded deployment, publishes only a `VALIDATED` deployment and waits for `PUBLISHED`. The
+   existing bundle is published without rebuilding it.
 7. **Confirm:** wait for Central publication, resolve all three libraries from a fresh Maven
    repository and run the consumer smoke test again. Publish the GitHub release with installation
    instructions, changelog and benchmark summary. Bump the maintenance branch to `0.1.1-SNAPSHOT`.
@@ -81,10 +89,11 @@ embeds its version in a resource used by request headers, so changing `-rc.1` to
 would change the tested artifacts. Keep candidates out of shared snapshot repositories and
 developers' normal Maven caches.
 
-If publication fails after tagging, retry promotion of the same deployment after inspecting its
-state; do not replace the tag or silently rebuild. A defect requiring changed artifacts after a
-stable tag gets a new version. Published Central components cannot be replaced or removed through
-the normal release process. See [Central immutability](https://central.sonatype.org/publish/requirements/immutability/).
+If publication fails after tagging, rerun the promotion step; it inspects the recorded deployment
+state before acting. See [recovering a failed promotion](#recovering-a-failed-promotion). Do not
+replace the tag or silently rebuild. A defect requiring changed artifacts after a stable tag gets
+a new version. Published Central components cannot be replaced or removed through the normal
+release process. See [Central immutability](https://central.sonatype.org/publish/requirements/immutability/).
 
 ## Release checks
 
@@ -149,28 +158,75 @@ including raw results, manifests, source/JAR hashes and host/runtime details. Pu
 table and limitations in the release notes. CI artifacts can hold candidates, but retain accepted
 release evidence durably rather than relying on their expiry window.
 
-## Publishing setup to implement before the cut
+## Publishing setup
 
-1. **Central access:** verify a namespace covering `net.codefinch.jev`, confirm its ownership, and
-   configure a Portal token and signing key in a protected release environment. Namespace access
-   is a prerequisite, not something this repository proves. See [namespace registration](https://central.sonatype.org/register/namespace/).
-2. **Packaging profile:** attach source/Javadoc JARs and signatures; pin the Central publishing
-   plugin. Publish `jev-parent` plus `jev-core`, `jev-test` and `jev-micrometer`. Explicitly exclude
-   `jev-examples` and `jev-benchmarks` from the Central bundle and assert its contents in a dry run;
-   do not rely solely on their existing `maven.deploy.skip` flags. The parent POM must be published
-   because consumers inherit it. See [artifact requirements](https://central.sonatype.org/publish/requirements/).
-3. **Candidate workflow:** retain the existing `main` and `release/**` CI coverage and add a
-   manually dispatched candidate build. Use the publishing plugin's
-   `skipPublishing` mode to create a bundle without uploading. Keep automatic publication disabled.
-   See [plugin configuration](https://central.sonatype.org/publish/publish-portal-maven/).
-4. **Promotion workflow:** accept the stable tag and recorded candidate/deployment identity,
-   enforce successful checks and artifact hashes, and require release-environment approval before
-   publication. Use restricted credentials and serialize publication per version. Retrying must
-   inspect existing deployment state before uploading or publishing again.
-5. **Rehearsal:** produce an unpublished bundle, inspect its exact module list, signatures and
-   metadata, and run the isolated consumer tests. Make security scanning reliable under repository
-   throttling without suppressing errors. Then cut the first release branch and qualify its candidate.
+**Build profile.** `-Prelease` attaches sources and Javadoc, signs every file with the Bouncy
+Castle signer (`MAVEN_GPG_KEY` holds the armored secret key, `MAVEN_GPG_PASSPHRASE` its
+passphrase; nothing is read from `settings.xml` or gpg-agent) and runs the pinned
+`central-publishing-maven-plugin` at the `deploy` phase. Upload is off unless
+`-Dcentral.skipUpload=false` is passed, and `autoPublish` is never enabled. The bundle contains
+exactly `jev-parent` (POM) and `jev-core`, `jev-test`, `jev-micrometer` (JAR, sources, Javadoc,
+POM), each with `.asc`, `.md5`, `.sha1`, `.sha256` and `.sha512`. `jev-examples` and
+`jev-benchmarks` set `skipPublishing`, `gpg.skip` and `maven.source.skip` and are also listed in
+`excludeArtifacts`; `scripts/release_bundle.py check` fails on any other content.
+
+**External prerequisites** (none are proven by this repository):
+
+1. A Central Portal account with the `net.codefinch` namespace verified by a DNS `TXT` record on
+   the `codefinch.net` apex. Sub-namespaces such as `net.codefinch.jev` are covered by it. See
+   [namespace registration](https://central.sonatype.org/register/namespace/).
+2. A Portal user token, stored as repository environment secrets `CENTRAL_USERNAME` and
+   `CENTRAL_TOKEN`. See [artifact requirements](https://central.sonatype.org/publish/requirements/).
+3. A release signing key whose public key is on a key server; its armored secret key and
+   passphrase stored as `MAVEN_GPG_KEY` and `MAVEN_GPG_PASSPHRASE`.
+4. A GitHub environment named `release` holding those four secrets, with required reviewers, so
+   every candidate build and every promotion step waits for approval.
+5. A tag ruleset protecting `v*` from updates and deletion.
+
+**Local rehearsal** (throwaway key; never the release key):
+
+```sh
+export GNUPGHOME="$(mktemp -d)"
+gpg --batch --passphrase rehearsal --quick-generate-key "rehearsal <rehearsal@invalid>" ed25519 sign 1d
+export MAVEN_GPG_KEY="$(gpg --batch --pinentry-mode loopback --passphrase rehearsal --armor --export-secret-keys)"
+export MAVEN_GPG_PASSPHRASE=rehearsal
+python3 -B scripts/release_bundle.py rehearse --version 0.1.0 --runtime /path/to/jdk-21 --keep
+```
+
+The rehearsal refuses a dirty tree, builds the committed `HEAD` twice in a clean worktree at the
+final version with `-Prelease,release-checks,sbom`, compares the two bundles (signatures are the
+only permitted difference), checks the first bundle's exact contents, POM metadata, embedded
+version, Javadoc (no `internal` pages) and SBOM, writes `manifest.json`, then builds a consumer
+outside the reactor from an isolated repository seeded only from the bundle and runs it on the
+class path and the module path for each `--runtime`. Individual steps are available as
+`check`, `compare` and `consumer` subcommands; `python3 -B -m unittest discover -s scripts` runs
+their deliberate-failure tests. On this machine Maven builds on the default JDK; CI builds the
+real candidate on the pinned Temurin 21.
+
+**Workflows.** `release-candidate.yml` and `release-promote.yml` are `workflow_dispatch` only,
+run in the `release` environment, keep read-only repository permissions and serialize per branch
+and per tag. The promotion workflow drives the Portal through `scripts/central_publish.py`, which
+uploads with `publishingType=USER_MANAGED`, polls `status` with a bounded wait, publishes only
+from `VALIDATED`, treats `PUBLISHING`/`PUBLISHED` as already done, refuses to drop a published
+deployment and never uploads when a deployment is already recorded for the tag.
 
 Snapshot publication from `main`, public RC artifacts and a general performance regression service
-can wait until there is a concrete need. The first release needs a dependable candidate, evidence
-and promotion path.
+can wait until there is a concrete need.
+
+## Recovering a failed promotion
+
+Every recovery starts by reading the recorded state; nothing is rebuilt. The `deployment-<tag>`
+artifact holds the deployment ID, and the summary of each promotion run prints it.
+
+| Symptom | Action |
+|---|---|
+| Candidate verification fails (commit, version or hash mismatch) | The tag or run ID is wrong. Fix the dispatch inputs; if the tag points at a different commit than the candidate, the candidate is not for this release. |
+| Upload fails before a deployment ID is recorded | Rerun `validate`; nothing was recorded, so it uploads again. Check the Portal UI for a stray deployment first and drop it there if one exists. |
+| Deployment is `FAILED` | Read the `errors` in the run log. Drop it (`central_publish.py drop` with the restored record, or the Portal UI), fix the cause on the release branch, and build a **new candidate**; a patched bundle is never uploaded under the old identity. |
+| Validation is still pending when the wait expires | Rerun `validate`; it resumes polling the recorded deployment. |
+| `publish` fails or times out | Rerun `publish`; it inspects the state first and only calls publish when the deployment is `VALIDATED`, otherwise it waits for `PUBLISHED`. |
+| The deployment artifact expired (90 days) | Find the deployment ID in the Portal's Deployments page and recreate `deployment/deployment.json` locally with `{"deploymentId": "..."}`, then run `central_publish.py status` from a trusted machine with the token in the environment. |
+| A published component is wrong | It cannot be replaced. Fix on the release branch, bump the patch version, and run the whole candidate and promotion sequence again. |
+
+Operations against the Portal need `CENTRAL_USERNAME`/`CENTRAL_TOKEN` in the environment;
+the script reads nothing else and prints no credentials.
