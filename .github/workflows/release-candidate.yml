@@ -52,12 +52,18 @@ jobs:
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
+          # Without this the preinstalled Temurin in the runner's tool cache satisfies the patch
+          # spec and the pinned build is never resolved against the Adoptium API.
+          check-latest: true
           java-version: ${{ env.CONSUMER_JDK }}
       - name: Install the build runtime (JDK 21, last so that it owns JAVA_HOME)
         id: jdk21
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
+          # Without this the preinstalled Temurin in the runner's tool cache satisfies the patch
+          # spec and the pinned build is never resolved against the Adoptium API.
+          check-latest: true
           java-version: ${{ env.BUILD_JDK }}
           cache: maven
       - name: Verify the resolved runtimes
