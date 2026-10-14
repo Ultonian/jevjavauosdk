@@ -418,7 +418,7 @@ def run_consumer(bundle, version, runtimes, workdir, mvnw=None):
     return outputs
 
 
-def rehearse(version, runtimes, keep):
+def rehearse(version, runtimes, keep, repository=None):
     """Clean worktree at the final version, two signed builds, checks, comparison, consumers."""
     for name in ('MAVEN_GPG_KEY', 'MAVEN_GPG_PASSPHRASE'):
         if not os.environ.get(name):
@@ -427,11 +427,15 @@ def rehearse(version, runtimes, keep):
         raise ValueError('Commit or stash changes first: a rehearsal builds the committed tree only')
     temp = Path(tempfile.mkdtemp(prefix='jev-rehearsal-'))
     worktree = temp / 'worktree'
+    # `deploy` installs the unpublished final version into the local repository, so the builds never
+    # use ~/.m2: later builds on this machine must not resolve a rehearsal as if it were released.
+    repository = Path(repository).resolve() if repository else temp / 'repository'
     try:
         git(['worktree', 'add', '--detach', str(worktree), 'HEAD'])
         for pom in [worktree / 'pom.xml', *worktree.glob('jev-*/pom.xml')]:
             pom.write_text(pom.read_text().replace('<version>0.1.0-SNAPSHOT</version>', f'<version>{version}</version>'))
-        mvn = [str(worktree / 'mvnw'), *MAVEN_FLAGS, '-Prelease,release-checks,sbom', '-DskipTests']
+        mvn = [str(worktree / 'mvnw'), *MAVEN_FLAGS, f'-Dmaven.repo.local={repository}',
+               '-Prelease,release-checks,sbom', '-DskipTests']
         bundles = []
         for attempt in (1, 2):
             subprocess.run([*mvn, 'clean', 'deploy'], cwd=worktree, check=True)
@@ -478,6 +482,8 @@ def main(argv=None):
     rehearsal.add_argument('--version', default='0.1.0')
     rehearsal.add_argument('--runtime', action='append', default=[], metavar='JAVA_HOME')
     rehearsal.add_argument('--keep', action='store_true', help='retain the evidence directory')
+    rehearsal.add_argument('--repository', metavar='DIR',
+                           help='Maven repository for the rehearsal builds (default: fresh and temporary; never ~/.m2)')
     args = parser.parse_args(argv)
 
     if args.command == 'check':
@@ -500,7 +506,7 @@ def main(argv=None):
             with tempfile.TemporaryDirectory(prefix='jev-consumer-') as workdir:
                 print('\n'.join(run_consumer(args.bundle, args.version, runtimes, workdir)))
     else:
-        rehearse(args.version, args.runtime or [None], args.keep)
+        rehearse(args.version, args.runtime or [None], args.keep, args.repository)
 
 
 if __name__ == '__main__':

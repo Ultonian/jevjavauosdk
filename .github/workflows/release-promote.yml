@@ -3,7 +3,8 @@ name: Release promotion
 # Takes a qualified candidate (by workflow run id) and a stable tag, verifies they describe the same
 # commit and bundle, then uploads the bundle to the Central Portal as a user-managed deployment
 # (step "validate") and, on a second explicit dispatch, publishes it (step "publish"). It never
-# rebuilds; a rerun resumes from the recorded deployment state instead of uploading again.
+# rebuilds; a rerun resumes from the recorded deployment state instead of uploading again, and
+# refuses to resume a deployment that was recorded for a different bundle or candidate.
 
 on:
   workflow_dispatch:
@@ -28,6 +29,11 @@ permissions:
 concurrency:
   group: release-promote-${{ inputs.tag }}
   cancel-in-progress: false
+
+defaults:
+  run:
+    # Explicit bash enables pipefail; the implicit shell is only `bash -e`.
+    shell: bash
 
 jobs:
   promote:
@@ -95,13 +101,17 @@ jobs:
           else
             mkdir -p deployment; echo "No earlier deployment recorded for $TAG"
           fi
+      # Runs for both steps: with a restored record it uploads nothing, but it binds the record to
+      # this bundle, Portal and candidate before `publish` can act on it.
       - name: Upload to the Portal and wait for validation (no publication)
         env:
           CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           CENTRAL_TOKEN: ${{ secrets.CENTRAL_TOKEN }}
+          RUN_ID: ${{ inputs.candidate_run_id }}
         run: |
           python3 -B scripts/central_publish.py --record deployment/deployment.json upload \
-            candidate/central-bundle.zip --name "jev-parent $version $commit" \
+            candidate/central-bundle.zip --name "jev-parent $version $commit run $RUN_ID" \
+            --candidate "run $RUN_ID commit $commit version $version" \
             --expect-sha256 "$(python3 -c "import json; print(json.load(open('candidate/manifest.json'))['bundle']['sha256'])")"
       - name: Publish the validated deployment
         if: inputs.step == 'publish'

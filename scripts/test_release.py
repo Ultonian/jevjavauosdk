@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import tempfile
 import unittest
 import zipfile
@@ -241,6 +242,38 @@ class PortalTest(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, 'Cannot drop'):
                 central_publish.main(['--record', str(self.record), 'drop'])
 
+    def test_recorded_deployment_must_describe_this_bundle_and_candidate(self):
+        arguments = ['--record', str(self.record), 'upload', str(self.bundle), '--name', 'jev-parent 0.1.0 abc run 7',
+                     '--candidate', 'run 7 commit abc version 0.1.0', '--expect-sha256', self.digest]
+        good = {'deploymentId': 'dep-1', 'bundleSha256': self.digest, 'baseUrl': central_publish.DEFAULT_BASE,
+                'name': 'jev-parent 0.1.0 abc run 7', 'candidate': 'run 7 commit abc version 0.1.0'}
+        rejected = {
+            'other bundle': {**good, 'bundleSha256': '0' * 64},
+            'hash missing': {k: v for k, v in good.items() if k != 'bundleSha256'},
+            'other Portal': {**good, 'baseUrl': 'https://portal.invalid'},
+            'other candidate run': {**good, 'name': 'jev-parent 0.1.0 abc run 6', 'candidate': 'run 6 commit abc version 0.1.0'},
+        }
+        for reason, record in rejected.items():
+            self.record.write_text(json.dumps(record))
+            with patch('central_publish.request') as network:
+                with self.assertRaisesRegex(SystemExit, 'different candidate', msg=reason):
+                    central_publish.main(arguments)
+            network.assert_not_called()
+        # A record describing exactly this bundle and candidate resumes without a new upload, and the
+        # Portal's own name for the deployment must agree with the record.
+        self.record.write_text(json.dumps(good))
+        report = {'deploymentId': 'dep-1', 'deploymentName': 'jev-parent 0.1.0 abc run 7', 'deploymentState': 'VALIDATED'}
+        with patch('central_publish.request', return_value=(200, json.dumps(report).encode())) as network:
+            central_publish.main(arguments)
+        self.assertEqual([c.args[1].split('publisher/')[1][:6] for c in network.call_args_list], ['status'])
+        with patch('central_publish.request', return_value=(200, json.dumps({**report, 'deploymentName': 'stray'}).encode())):
+            with self.assertRaisesRegex(PortalError, 'does not describe this deployment'):
+                central_publish.main(arguments)
+            with self.assertRaisesRegex(PortalError, 'does not describe this deployment'):
+                central_publish.main(['--record', str(self.record), 'publish'])
+        with self.assertRaisesRegex(SystemExit, 'not https://portal.invalid'):
+            central_publish.main(['--record', str(self.record), '--base-url', 'https://portal.invalid', 'publish'])
+
     def test_http_errors_are_not_retried_except_5xx(self):
         from urllib.error import HTTPError
         attempts = []
@@ -263,6 +296,34 @@ class PortalTest(unittest.TestCase):
             with self.assertRaisesRegex(PortalError, '503'):
                 central_publish.request('POST', 'https://example.invalid/x')
         self.assertEqual(len(attempts), 3)
+
+
+class WorkflowTest(unittest.TestCase):
+    """Text-level guards for the release workflows (the hook's interpreter has no YAML library)."""
+
+    WORKFLOWS = Path(__file__).resolve().parents[1] / '.github/workflows'
+
+    def test_logged_pipelines_fail_on_the_first_failing_command(self):
+        for name in ('release-candidate.yml', 'release-promote.yml'):
+            text = (self.WORKFLOWS / name).read_text()
+            self.assertRegex(text, r'\ndefaults:\n  run:\n(    #.*\n)*    shell: bash\n', name)
+
+    def test_candidate_toolchain_is_pinned_in_the_workflow_not_chosen_at_dispatch(self):
+        text = (self.WORKFLOWS / 'release-candidate.yml').read_text()
+        self.assertNotIn('inputs', text)
+        pins = dict(re.findall(r'^  (BUILD_JDK|BUILD_JDK_RUNTIME|CONSUMER_JDK|CONSUMER_JDK_RUNTIME): "([^"]+)"$', text, re.M))
+        self.assertEqual(sorted(pins), ['BUILD_JDK', 'BUILD_JDK_RUNTIME', 'CONSUMER_JDK', 'CONSUMER_JDK_RUNTIME'])
+        self.assertRegex(pins['BUILD_JDK'], r'^21\.\d+\.\d+$')
+        self.assertRegex(pins['CONSUMER_JDK'], r'^25\.\d+\.\d+$')
+        for spec, runtime in (('BUILD_JDK', 'BUILD_JDK_RUNTIME'), ('CONSUMER_JDK', 'CONSUMER_JDK_RUNTIME')):
+            self.assertRegex(pins[runtime], '^' + re.escape(pins[spec]) + r'(\.\d+)?\+\d+-LTS$')
+        self.assertIn('verify "$JDK21" "$BUILD_JDK_RUNTIME"', text)
+        self.assertIn('verify "$JDK25" "$CONSUMER_JDK_RUNTIME"', text)
+
+    def test_promotion_binds_the_deployment_to_the_candidate(self):
+        text = (self.WORKFLOWS / 'release-promote.yml').read_text()
+        self.assertIn('--candidate "run $RUN_ID commit $commit version $version"', text)
+        self.assertIn('--expect-sha256', text)
 
 
 if __name__ == '__main__':

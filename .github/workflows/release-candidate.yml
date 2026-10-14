@@ -3,14 +3,12 @@ name: Release candidate
 # Builds one signed, unpublished Central bundle from a release branch, proves it is reproducible,
 # checks its exact contents and runs isolated consumers on the supported runtimes. Nothing is
 # uploaded. The retained artifact is the only input to the promotion workflow.
+#
+# The toolchain is pinned below, not chosen at dispatch time, so the candidate's commit fully
+# determines how it was built. Bump the pins by pull request.
 
 on:
   workflow_dispatch:
-    inputs:
-      jdk:
-        description: "Temurin JDK used to build the artifacts (exact patch pins the toolchain, e.g. 21.0.9)"
-        required: true
-        default: "21"
 
 permissions:
   contents: read
@@ -18,6 +16,20 @@ permissions:
 concurrency:
   group: release-candidate-${{ github.ref }}
   cancel-in-progress: false
+
+defaults:
+  run:
+    # Explicit bash enables pipefail; the implicit shell is only `bash -e`, which would let a
+    # failing command hide behind `| tee`.
+    shell: bash
+
+env:
+  # setup-java resolves the newest Temurin build of each pinned patch version; the verification
+  # step then requires java.runtime.version to match the expected build exactly.
+  BUILD_JDK: "21.0.12"
+  BUILD_JDK_RUNTIME: "21.0.12.1+1-LTS"
+  CONSUMER_JDK: "25.0.4"
+  CONSUMER_JDK_RUNTIME: "25.0.4.1+1-LTS"
 
 jobs:
   candidate:
@@ -35,16 +47,38 @@ jobs:
             *) echo "::error::Candidates are built from release/** only, not $REF"; exit 1 ;;
           esac
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+      - name: Install the consumer runtime (JDK 25)
+        id: jdk25
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
-          java-version: ${{ inputs.jdk }}
-          cache: maven
-      - name: Record the build JDK
+          java-version: ${{ env.CONSUMER_JDK }}
+      - name: Install the build runtime (JDK 21, last so that it owns JAVA_HOME)
         id: jdk21
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: ${{ env.BUILD_JDK }}
+          cache: maven
+      - name: Verify the resolved runtimes
+        env:
+          JDK21: ${{ steps.jdk21.outputs.path }}
+          JDK25: ${{ steps.jdk25.outputs.path }}
         run: |
-          echo "home=$JAVA_HOME" >> "$GITHUB_OUTPUT"
-          java -version
+          verify() {
+            properties=$("$1/bin/java" -XshowSettings:properties -version 2>&1)
+            vendor=$(printf '%s\n' "$properties" | sed -n 's/^ *java.vendor = //p')
+            runtime=$(printf '%s\n' "$properties" | sed -n 's/^ *java.runtime.version = //p')
+            echo "$1: $vendor $runtime"
+            if [ "$vendor" != "Eclipse Adoptium" ] || [ "$runtime" != "$2" ]; then
+              echo "::error::Expected Eclipse Adoptium $2 at $1, found '$vendor' '$runtime'"; exit 1
+            fi
+          }
+          verify "$JDK21" "$BUILD_JDK_RUNTIME"
+          verify "$JDK25" "$CONSUMER_JDK_RUNTIME"
+          if [ "$JAVA_HOME" != "$JDK21" ]; then
+            echo "::error::JAVA_HOME is $JAVA_HOME, not the build JDK $JDK21"; exit 1
+          fi
       - name: Cache the Maven wrapper distribution
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -81,7 +115,6 @@ jobs:
       - name: Check exact bundle contents and record the candidate identity
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          JDK_INPUT: ${{ inputs.jdk }}
         run: |
           python3 -B scripts/release_bundle.py check candidate/central-bundle.zip --version "$VERSION" \
             --sbom candidate/bom.json --manifest candidate/manifest.json
@@ -89,22 +122,16 @@ jobs:
           import json, os
           path = 'candidate/manifest.json'
           manifest = json.load(open(path))
-          manifest['jdkInput'] = os.environ['JDK_INPUT']
+          manifest['buildJdk'] = 'Eclipse Adoptium ' + os.environ['BUILD_JDK_RUNTIME']
+          manifest['consumerJdks'] = ['Eclipse Adoptium ' + os.environ[name]
+                                      for name in ('BUILD_JDK_RUNTIME', 'CONSUMER_JDK_RUNTIME')]
           json.dump(manifest, open(path, 'w'), indent=2)
           EOF
-      - name: Install the second supported runtime
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
-        with:
-          distribution: temurin
-          java-version: "25"
-      - name: Record the second runtime
-        id: jdk25
-        run: echo "home=$JAVA_HOME" >> "$GITHUB_OUTPUT"
       - name: Run isolated consumers against the bundle on JDK 21 and 25
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          JDK21: ${{ steps.jdk21.outputs.home }}
-          JDK25: ${{ steps.jdk25.outputs.home }}
+          JDK21: ${{ steps.jdk21.outputs.path }}
+          JDK25: ${{ steps.jdk25.outputs.path }}
         run: |
           python3 -B scripts/release_bundle.py consumer candidate/central-bundle.zip --version "$VERSION" \
             --runtime "$JDK21" --runtime "$JDK25" 2>&1 | tee candidate/consumer.log
@@ -115,11 +142,12 @@ jobs:
           path: candidate/
           if-no-files-found: error
           retention-days: 90
+      - name: Keep the unpublished final version out of the saved Maven cache
+        if: always()
+        run: rm -rf ~/.m2/repository/net/codefinch
       - name: Summarize the candidate identity
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          JDK_INPUT: ${{ inputs.jdk }}
-          JDK21: ${{ steps.jdk21.outputs.home }}
         run: |
           {
             echo "## Candidate $VERSION"
@@ -129,7 +157,8 @@ jobs:
             echo "| Commit | \`$GITHUB_SHA\` |"
             echo "| Workflow run | $GITHUB_RUN_ID |"
             echo "| Bundle SHA-256 | \`$(python3 -c "import json; print(json.load(open('candidate/manifest.json'))['bundle']['sha256'])")\` |"
-            echo "| Build JDK | $("$JDK21/bin/java" -version 2>&1 | head -1) (input: $JDK_INPUT) |"
+            echo "| Build JDK | Eclipse Adoptium $BUILD_JDK_RUNTIME |"
+            echo "| Consumer JDKs | Eclipse Adoptium $BUILD_JDK_RUNTIME, $CONSUMER_JDK_RUNTIME |"
             echo
             echo "Retained as artifact \`candidate-$VERSION-$(git rev-parse --short=12 HEAD)\` for 90 days; copy it to durable storage once accepted."
           } >> "$GITHUB_STEP_SUMMARY"

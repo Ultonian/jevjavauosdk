@@ -1,7 +1,10 @@
 """Drive the Central Portal Publisher API for one already-built, already-checked bundle.
 
 The bundle is never rebuilt here. Every action first inspects the deployment's recorded state, so a
-rerun after a failed step resumes rather than uploading or publishing twice:
+rerun after a failed step resumes rather than uploading or publishing twice. The record binds the
+deployment to the bundle hash, the Portal, the deployment name and the candidate identity; a rerun
+with a different bundle or candidate is refused instead of silently validating or publishing the
+deployment that was recorded earlier:
 
   upload    upload the bundle as a USER_MANAGED deployment, wait for VALIDATED, record the id
   status    print the recorded deployment's state and any validation errors
@@ -138,6 +141,26 @@ def describe(report):
     return '\n'.join(lines)
 
 
+def check_record(record, expected):
+    """Refuse a record that describes a different bundle, Portal or candidate than this run's."""
+    mismatches = [f'{key}: recorded {record.get(key)!r}, this run {value!r}'
+                  for key, value in expected.items() if record.get(key) != value]
+    if mismatches:
+        raise SystemExit(f'Recorded deployment {record.get("deploymentId")} belongs to a different candidate:\n  '
+                         + '\n  '.join(mismatches)
+                         + '\nIf that deployment must not be published, drop it; then remove its record '
+                           '(delete the deployment-<tag> artifacts) before uploading this candidate.')
+
+
+def check_report(report, record):
+    """The Portal's own view of the deployment must agree with the record's name."""
+    name = report.get('deploymentName')
+    if name and record.get('name') and name != record['name']:
+        raise PortalError(f'Deployment {record.get("deploymentId")} is named {name!r} on the Portal, '
+                          f'not {record["name"]!r}: the record does not describe this deployment')
+    return report
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--base-url', default=os.environ.get('CENTRAL_BASE_URL', DEFAULT_BASE))
@@ -148,6 +171,8 @@ def main(argv=None):
     up.add_argument('bundle')
     up.add_argument('--name', required=True, help='deployment name shown on the Portal, e.g. jev-parent 0.1.0')
     up.add_argument('--expect-sha256', required=True, help='bundle hash from the candidate manifest')
+    up.add_argument('--candidate', default='',
+                    help='candidate identity recorded with the deployment, e.g. "run 123 commit abc version 0.1.0"')
     commands.add_parser('status')
     commands.add_parser('publish')
     commands.add_parser('drop')
@@ -159,15 +184,18 @@ def main(argv=None):
         actual = hashlib.sha256(Path(args.bundle).read_bytes()).hexdigest()
         if actual != args.expect_sha256:
             raise SystemExit(f'Bundle hash {actual} does not match the manifest {args.expect_sha256}')
+        identity = {'bundleSha256': actual, 'baseUrl': base, 'name': args.name, 'candidate': args.candidate}
         if record:
+            check_record(record, identity)
             deployment_id = record['deploymentId']
-            print(f'Deployment {deployment_id} already recorded; not uploading again.')
+            print(f'Deployment {deployment_id} already recorded for this bundle; not uploading again.')
         else:
             deployment_id, digest = upload(base, args.bundle, args.name)
-            save_record(args.record, {'deploymentId': deployment_id, 'bundleSha256': digest,
-                                      'name': args.name, 'baseUrl': base})
+            record = {'deploymentId': deployment_id, **identity}
+            save_record(args.record, record)
             print(f'Uploaded deployment {deployment_id}; waiting for validation')
-        report = wait_for(base, deployment_id, {'VALIDATED', 'PUBLISHING', 'PUBLISHED'}, args.timeout)
+        report = check_report(wait_for(base, deployment_id, {'VALIDATED', 'PUBLISHING', 'PUBLISHED'}, args.timeout),
+                              record)
         print(describe(report))
         if report['deploymentState'] == 'FAILED':
             raise SystemExit('Deployment FAILED: drop it and fix the cause with a new candidate')
@@ -178,10 +206,12 @@ def main(argv=None):
     if not record:
         raise SystemExit(f'No deployment recorded in {args.record}; upload first')
     deployment_id = record['deploymentId']
+    if record.get('baseUrl', base) != base:
+        raise SystemExit(f'Deployment {deployment_id} was recorded on {record["baseUrl"]}, not {base}')
     if args.command == 'status':
-        print(describe(status(base, deployment_id)))
+        print(describe(check_report(status(base, deployment_id), record)))
     elif args.command == 'publish':
-        report = status(base, deployment_id)
+        report = check_report(status(base, deployment_id), record)
         state = report['deploymentState']
         if state in ('PUBLISHING', 'PUBLISHED'):
             print('Publication already requested.\n' + describe(report))
@@ -195,11 +225,12 @@ def main(argv=None):
         if report['deploymentState'] != 'PUBLISHED':
             raise SystemExit('Publication is not complete; rerun publish to resume waiting')
     elif args.command == 'drop':
-        report = status(base, deployment_id)
+        report = check_report(status(base, deployment_id), record)
         if report['deploymentState'] in ('PUBLISHING', 'PUBLISHED'):
             raise SystemExit('Cannot drop a deployment that is publishing or published')
         drop(base, deployment_id)
-        print(f'Dropped {deployment_id}; remove {args.record} before uploading a new candidate')
+        print(f'Dropped {deployment_id}; remove its record ({args.record} and any deployment-<tag> '
+              'artifacts) before uploading a new candidate')
 
 
 if __name__ == '__main__':
