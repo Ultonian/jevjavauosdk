@@ -3,9 +3,11 @@
 Notable user-facing changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This SDK has its own versioning; upstream versions below are compatibility references.
 
-Upstream tracked: `@typesafe-ai/sdk` 0.6.0, `typesafe-sdk` (Python) 0.7.2, OpenAPI `info.version` 0.2.0.
-Python 0.7.2 adds optional HTTP/2 packaging and documentation; the audited behavioural baseline
-remains 0.7.1. See [pinned references](docs/PARITY.md#pinned-references).
+Upstream tracked: `@typesafe-ai/sdk` 0.6.0, `typesafe-sdk` (Python) 0.7.2, OpenAPI `info.version` 0.2.0
+(snapshot of 26 October 2026). Python 0.7.2 adds optional HTTP/2 packaging and documentation; the
+audited behavioural baseline remains 0.7.1. JavaScript 0.7.0 and Python 0.7.5 (Jev 1.14: image
+assets, box answers, zstd compression) were reviewed but not adopted. See
+[pinned references](docs/PARITY.md#pinned-references).
 
 ## [Unreleased]
 
@@ -38,6 +40,8 @@ Initial release in preparation; not yet published to Maven Central.
   checks and scheduled dependency/upstream/runtime monitoring.
 - Contributor instructions, private security reporting, issue forms and public API Javadoc.
   Internal implementation packages are excluded from generated API documentation.
+- Text requests verified against models `jev-1.13.0` and `jev-1.14.0`. Jev 1.14's `box` answers are
+  ignored with a warning and image assets cannot be sent; both are planned for a later release.
 
 ### Changed
 

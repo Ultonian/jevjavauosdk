@@ -28,8 +28,10 @@ module adds Micrometer dependencies.
 The built-in JDK HTTP client prefers HTTP/2 and falls back to HTTP/1.1 according to the server,
 proxy and transport configuration; no extra HTTP/2 library is needed. An injected `HttpClient`
 controls its own protocol preference. See [JDK protocol selection](https://docs.oracle.com/en/java/javase/21/docs/api/java.net.http/java/net/http/HttpClient.Builder.html#version(java.net.http.HttpClient.Version)).
-The tracked API schema is OpenAPI `info.version` 0.2.0; [pinned references](docs/PARITY.md#pinned-references)
-record the exact upstream inputs and the limits of that comparison.
+The tracked API schema is OpenAPI `info.version` 0.2.0, snapshot of 26 October 2026;
+[pinned references](docs/PARITY.md#pinned-references) record the exact upstream inputs and the
+limits of that comparison. Text requests were verified against models `jev-1.13.0` and `jev-1.14.0`.
+Jev 1.14's image assets and box answers are not supported yet; a `box` answer is ignored with a warning.
 
 ## Versioning and stability
 

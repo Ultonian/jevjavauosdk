@@ -1,11 +1,26 @@
 {
   "schema": {
     "url": "https://api.typesafe.ai/openapi.json",
-    "path": "docs/upstream/openapi-0.2.0-2026-09-20.json",
+    "path": "docs/upstream/openapi-0.2.0-2026-10-26.json",
     "version": "0.2.0",
-    "sha256": "a191f8a7df6bd6fedced8120dd0fd106f88575d1d1c8360d08900a6c7c0360d5"
+    "sha256": "3ca93b6e6b9aa8d7820531b78c66ed7a9798b11e6e163ad96b140fb3d75fbcf4"
   },
-  "npm": {"url": "https://registry.npmjs.org/@typesafe-ai/sdk/latest", "version": "0.6.0"},
-  "pypi": {"url": "https://pypi.org/pypi/typesafe-sdk/json", "version": "0.7.2"},
-  "acknowledgements": []
+  "npm": {
+    "url": "https://registry.npmjs.org/@typesafe-ai/sdk/latest",
+    "version": "0.6.0"
+  },
+  "pypi": {
+    "url": "https://pypi.org/pypi/typesafe-sdk/json",
+    "version": "0.7.2"
+  },
+  "acknowledgements": [
+    {
+      "id": "npm:0.7.0",
+      "reason": "Reviewed 2026-10-26: adds images (assets), box answers, zstd request compression, null-tolerant usage token counts and requires Node 22. Text behaviour unchanged; images/box planned for 0.2.0. The audited baseline stays 0.6.0 (see docs/PARITY.md)."
+    },
+    {
+      "id": "pypi:0.7.5",
+      "reason": "Reviewed 2026-10-26: 0.7.3-0.7.5 add images (assets/attach_assets), Box, zstd request compression and stricter request validation. Text behaviour unchanged; images/box planned for 0.2.0. The audited baseline stays 0.7.1/0.7.2 (see docs/PARITY.md)."
+    }
+  ]
 }

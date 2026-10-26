@@ -22,7 +22,8 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 /**
  * Opt-in probes against the real API: {@code JEV_RUN_LIVE_TESTS=1} and {@code TYPESAFE_API_KEY}.
- * First run 21 Sep 2026; the observations are recorded in docs/PARITY.md and asserted here.
+ * First run 21 Sep 2026, re-run 26 Oct 2026 against jev-1.13.0 and jev-1.14.0 (set {@code
+ * TYPESAFE_DEFAULT_MODEL}); the observations are recorded in docs/PARITY.md and asserted here.
  */
 @EnabledIfEnvironmentVariable(named = "JEV_RUN_LIVE_TESTS", matches = "1")
 class LiveApiTest {
@@ -64,7 +65,8 @@ class LiveApiTest {
                       c.systemOne(
                           State.of("x"),
                           Questions.builder().score("s", "How much?", eleven).build())));
-      assertThat(eleven11).contains("rejected: 400").contains("at most 10");
+      // 21 Sep 2026: HTTP 400. 26 Oct 2026: the schema declares maxItems 10 and rejects with 422.
+      assertThat(eleven11).contains("rejected: 422").contains("at most 10");
       ChoiceCriteria.Builder many = ChoiceCriteria.builder();
       for (int i = 0; i < 256; i++) {
         many.option("opt" + i);
@@ -77,7 +79,7 @@ class LiveApiTest {
                       c.systemOne(
                           State.of("x"),
                           Questions.builder().choice("c", "Which?", many.build()).build())));
-      assertThat(many256).contains("rejected: 400").contains("at most 255");
+      assertThat(many256).contains("rejected: 422").contains("at most 255");
       SystemOneResponse omitted =
           c.systemOne(
               State.of("Hello there"),

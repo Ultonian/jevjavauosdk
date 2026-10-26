@@ -23,10 +23,14 @@ Request and response data types live in `net.codefinch.jev.model`; client config
 | Score criteria | At least two non-null levels, ordered from lowest to highest. |
 | Model selection | A request's `.withModel(...)` overrides the client's default model. |
 | Extra request fields | There is no `extra_body` or arbitrary raw-request escape hatch. |
+| Image assets (Jev 1.14) | Not supported: `assets` and the multipart request body cannot be sent. Planned for 0.2.0. |
+| Box questions (Jev 1.14) | Not representable. Planned for 0.2.0. |
+| Danger-zone headers | `TypeSafe-Danger-Zone-Images` and `TypeSafe-Danger-Zone-Long-Context` are ordinary headers for `defaultHeaders`; the long-context limits are usable with text requests today. |
 
 The SDK validates shapes, not every service limit. It does not enforce token budgets or upper
 bounds on choice/score counts. Oversized requests can therefore fail at the service with
-`JevBadRequestException` or another API error. Historical observations are listed below.
+`JevUnprocessableEntityException`, `JevBadRequestException` or another API error. Historical
+observations are listed below.
 
 ## Responses
 
@@ -37,7 +41,8 @@ counts in `usage`. Invalid successful responses throw `JevResponseValidationExce
 Unknown fields are ignored. An unknown answer `type` is omitted from the typed answers and emits
 a WARNING through the client's configured log filter. The original JSON remains available in
 `SystemOneResponse.rawBody()`. Consequently, a non-empty response containing only unknown answer
-kinds can produce an empty typed `Answers` map.
+kinds can produce an empty typed `Answers` map. Jev 1.14's `box` answers are such an unknown kind
+in 0.1.0 (`ResponseParserTest.boxAnswerIsDroppedButStaysInRawBody`).
 
 Use `answers.get(id)` when an answer may be absent. Typed accessors such as `answers.noul(id)`
 throw `JevMissingAnswerException` for a missing id and `JevAnswerTypeException` for the wrong kind.
@@ -56,6 +61,7 @@ root-package types must update imports and recompile; exception names and inheri
 |---|---|
 | HTTP 400 / 401 / 403 / 404 | `JevBadRequestException` / `JevAuthenticationException` / `JevPermissionDeniedException` / `JevNotFoundException` |
 | HTTP 422 | `JevUnprocessableEntityException`; `fieldErrors()` extracts supported validation details. |
+| 400 body shape | The schema documents `{"detail": {"error_type", "message"}}` or a string `detail`; the message is extracted, `error_type` is not exposed (`JevApiExceptionTest.messageIsExtractedInUpstreamOrder`). |
 | HTTP 429 | `JevRateLimitException`; `retryAfter()` exposes a parsed server delay when present. |
 | HTTP 5xx | `JevInternalServerException`; `isOverloaded()` identifies 529. |
 | Other unsuccessful HTTP status | `JevApiException` with the status, headers and body. |
@@ -122,15 +128,22 @@ is not. Metrics observers run asynchronously; they may be delivered after a call
 |---|---|
 | Official JavaScript SDK | `@typesafe-ai/sdk` 0.6.0, commit `66880ccded6cb642dc1809620c2b108c33730214` |
 | Official Python SDK contract baseline | `typesafe-sdk` 0.7.1, commit `0ffd094c72ed9445223060b24ffd7a56aa781fb4` |
-| OpenAPI | [`info.version` 0.2.0, retrieved 20 September 2026](upstream/openapi-0.2.0-2026-09-20.json) |
+| OpenAPI | [`info.version` 0.2.0, retrieved 26 October 2026](upstream/openapi-0.2.0-2026-10-26.json) |
 
 Python `typesafe-sdk` 0.7.2 (26 September 2026) was checked against the pinned 0.7.1 commit:
 [the upstream diff](https://github.com/typesafe-ai/typesafe-sdk-python/compare/0ffd094c72ed9445223060b24ffd7a56aa781fb4...f078f1e208a0d885154dc758344ae4fce77ac168)
 adds an optional `http2` packaging extra and documentation, with no SDK source changes. The
 changelog tracks 0.7.2; the behavioural contract baseline above remains 0.7.1.
 
-These references document the contract used to implement this SDK. They are historical snapshots;
-this documentation cleanup does not constitute a new audit of upstream releases or a live API run.
+JavaScript 0.7.0 and Python 0.7.5 (both 14 October 2026) were reviewed, not audited, when the
+schema snapshot was refreshed: they add Jev 1.14 image assets, box answers and zstd request
+compression, and JavaScript now tolerates null token counts and requires Node 22. None of that
+changes text requests, so the audited baselines above stand; the additions are planned for 0.2.0.
+The 26 October schema snapshot adds the same features plus a documented 400 error shape and
+shortened validation-error fields, with `info.version` still 0.2.0.
+
+These references document the contract used to implement this SDK. They are historical snapshots
+and do not constitute an audit of newer upstream releases.
 
 ## Historical service observations
 
@@ -142,6 +155,13 @@ timestamp with an offset rather than a date alone. Invalid and missing keys prod
 
 Omitted and null instructions produced similar answers in a small probe; that does not establish
 semantic equivalence. Explicit null noul criteria were accepted, but this SDK emits omission.
+
+Re-run on **26 October 2026** against `jev-1.13.0` and `jev-1.14.0` explicitly (the `jev-latest`
+alias had moved to 1.14.0 around 21 October): text requests behaved identically on both, each
+response naming the requested versioned model. The 10-level score and 255-option choice limits are
+now rejected by request validation (HTTP 422 naming the field) instead of HTTP 400; the schema
+declares `maxItems: 10` for score criteria, while the choice cap remains server-side only.
+`GET /v1/models` lists only the `jev-latest` and `jev-preview` aliases, not versioned ids.
 
 To recheck the supported live probes, follow [the opt-in test instructions](../CONTRIBUTING.md#live-service-tests).
 They require `JEV_RUN_LIVE_TESTS=1` and `TYPESAFE_API_KEY`, make real calls and consume account usage.
