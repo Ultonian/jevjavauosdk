@@ -6,10 +6,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
+import java.net.Authenticator;
+import java.net.CookieHandler;
+import java.net.ProxySelector;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
 import net.codefinch.jev.exception.JevDeadlineExceededException;
 import net.codefinch.jev.exception.JevInternalServerException;
 import net.codefinch.jev.exception.JevTimeoutException;
@@ -64,6 +76,27 @@ class HttpDeadlineTest {
     }
   }
 
+  /**
+   * The JDK request timeout shares the attempt budget and can fire before the SDK's own wait does;
+   * both outcomes must report the same attempt timeout.
+   */
+  @Test
+  void jdkRequestTimeoutReportsTheAttemptBudget() {
+    HttpTimeoutException jdk = new HttpTimeoutException("request timed out");
+    try (JevClient c =
+        client()
+            .httpClient(new FailingHttpClient(jdk))
+            .timeout(Duration.ofMillis(300))
+            .retryPolicy(RetryPolicy.NONE)
+            .build()) {
+      assertThatThrownBy(() -> c.systemOne(REQUEST))
+          .isInstanceOf(JevTimeoutException.class)
+          .isNotInstanceOf(JevDeadlineExceededException.class)
+          .hasMessageContaining("attempt timed out after 300 ms")
+          .hasCause(jdk);
+    }
+  }
+
   @Test
   void deadlineRefusesRetryThatWouldBreachIt() {
     AtomicLong nanos = new AtomicLong();
@@ -104,5 +137,79 @@ class HttpDeadlineTest {
       assertThat(c.systemOne(REQUEST).model()).isEqualTo("jev-1.13.0");
     }
     assertThat(server.requests()).hasSize(4);
+  }
+
+  /** An injected transport whose every exchange fails the way the JDK reports a request timeout. */
+  private static final class FailingHttpClient extends HttpClient {
+    private final IOException failure;
+
+    FailingHttpClient(IOException failure) {
+      this.failure = failure;
+    }
+
+    @Override
+    public <T> CompletableFuture<HttpResponse<T>> sendAsync(
+        HttpRequest request, HttpResponse.BodyHandler<T> handler) {
+      return CompletableFuture.failedFuture(failure);
+    }
+
+    @Override
+    public <T> CompletableFuture<HttpResponse<T>> sendAsync(
+        HttpRequest request,
+        HttpResponse.BodyHandler<T> handler,
+        HttpResponse.PushPromiseHandler<T> pushPromiseHandler) {
+      return sendAsync(request, handler);
+    }
+
+    @Override
+    public <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> handler)
+        throws IOException {
+      throw failure;
+    }
+
+    @Override
+    public Redirect followRedirects() {
+      return Redirect.NEVER;
+    }
+
+    @Override
+    public Optional<CookieHandler> cookieHandler() {
+      return Optional.empty();
+    }
+
+    @Override
+    public Optional<Duration> connectTimeout() {
+      return Optional.empty();
+    }
+
+    @Override
+    public Optional<ProxySelector> proxy() {
+      return Optional.empty();
+    }
+
+    @Override
+    public SSLContext sslContext() {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public SSLParameters sslParameters() {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Optional<Authenticator> authenticator() {
+      return Optional.empty();
+    }
+
+    @Override
+    public Version version() {
+      return Version.HTTP_1_1;
+    }
+
+    @Override
+    public Optional<Executor> executor() {
+      return Optional.empty();
+    }
   }
 }
