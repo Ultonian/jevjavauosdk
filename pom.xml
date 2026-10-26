@@ -494,5 +494,82 @@
         </plugins>
       </build>
     </profile>
+    <profile>
+      <!--
+        Publication bundle for Maven Central: sources, Javadoc, PGP signatures and a Central
+        Portal bundle. Signing uses the Bouncy Castle signer so the same inputs work locally and
+        in CI: MAVEN_GPG_KEY holds the armored secret key, MAVEN_GPG_PASSPHRASE its passphrase.
+        Upload is off unless -Dcentral.skipUpload=false is passed explicitly; publication on the
+        Portal is always a separate, user-managed action (see .github/maintainers/RELEASING.md).
+      -->
+      <id>release</id>
+      <properties>
+        <central.skipUpload>true</central.skipUpload>
+      </properties>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>attach-sources</id>
+                <goals>
+                  <goal>jar-no-fork</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>attach-javadoc</id>
+                <goals>
+                  <goal>jar</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>3.2.8</version>
+            <configuration>
+              <signer>bc</signer>
+              <bestPractices>true</bestPractices>
+            </configuration>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <goals>
+                  <goal>sign</goal>
+                </goals>
+                <phase>verify</phase>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <version>0.12.0</version>
+            <extensions>true</extensions>
+            <configuration>
+              <publishingServerId>central</publishingServerId>
+              <autoPublish>false</autoPublish>
+              <skipUpload>${central.skipUpload}</skipUpload>
+              <waitUntil>validated</waitUntil>
+              <deploymentName>${project.artifactId} ${project.version}</deploymentName>
+              <checksums>all</checksums>
+              <excludeArtifacts>
+                <artifact>jev-examples</artifact>
+                <artifact>jev-benchmarks</artifact>
+              </excludeArtifacts>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
   </profiles>
 </project>

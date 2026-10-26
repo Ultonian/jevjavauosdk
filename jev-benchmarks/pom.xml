@@ -11,6 +11,10 @@
   <description>Local component benchmarks. Built by verify, measured only on explicit invocation.</description>
   <properties>
     <maven.deploy.skip>true</maven.deploy.skip>
+    <!-- Never part of the Central bundle, whatever profile is active. -->
+    <skipPublishing>true</skipPublishing>
+    <gpg.skip>true</gpg.skip>
+    <maven.source.skip>true</maven.source.skip>
     <jmh.version>1.37</jmh.version>
   </properties>
   <dependencies>
