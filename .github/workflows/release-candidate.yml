@@ -26,10 +26,10 @@ defaults:
 env:
   # setup-java resolves the newest Temurin build of each pinned patch version; the verification
   # step then requires java.runtime.version to match the expected build exactly.
-  BUILD_JDK: "21.0.12"
-  BUILD_JDK_RUNTIME: "21.0.12.1+1-LTS"
-  CONSUMER_JDK: "25.0.4"
-  CONSUMER_JDK_RUNTIME: "25.0.4.1+1-LTS"
+  BUILD_JDK: "21.0.13"
+  BUILD_JDK_RUNTIME: "21.0.13+9-LTS"
+  CONSUMER_JDK: "25.0.5"
+  CONSUMER_JDK_RUNTIME: "25.0.5+8-LTS"
 
 jobs:
   candidate:
