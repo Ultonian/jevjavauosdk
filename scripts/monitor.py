@@ -7,15 +7,25 @@ import os
 import re
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def headers(url):
+    """Authenticate GitHub API calls when a token is available; unauthenticated calls hit a 60/h limit."""
+    result = {'User-Agent': 'jevjavauosdk-maintenance'}
+    token = os.environ.get('GITHUB_TOKEN')
+    if token and urlsplit(url).netloc == 'api.github.com':
+        result['Authorization'] = 'Bearer ' + token
+    return result
+
+
 def fetch(url):
     for attempt in range(3):
         try:
-            request = Request(url, headers={'User-Agent': 'jevjavauosdk-maintenance'})
+            request = Request(url, headers=headers(url))
             with urlopen(request, timeout=20) as response:
                 body = response.read(8 * 1024 * 1024 + 1)
                 if len(body) > 8 * 1024 * 1024:
