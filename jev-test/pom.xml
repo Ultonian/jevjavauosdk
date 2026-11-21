@@ -11,6 +11,7 @@
   <artifactId>jev-test</artifactId>
   <name>Jev Java Unofficial SDK - Test helpers</name>
   <description>RecordingJevClient: an in-memory JevClient for tests that returns scripted answers and records requests.</description>
+  <url>https://github.com/Ultonian/jevjavauosdk</url>
 
   <properties>
     <jacoco.line.minimum>0.95</jacoco.line.minimum>

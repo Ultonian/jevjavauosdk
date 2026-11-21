@@ -11,6 +11,7 @@
   <artifactId>jev-core</artifactId>
   <name>Jev Java Unofficial SDK - Core</name>
   <description>Zero-dependency (java.net.http + Jackson) client for the Jev System One API.</description>
+  <url>https://github.com/Ultonian/jevjavauosdk</url>
 
   <dependencies>
     <dependency>

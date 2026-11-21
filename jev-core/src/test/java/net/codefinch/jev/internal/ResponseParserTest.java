@@ -213,6 +213,17 @@ class ResponseParserTest {
         .hasMessageContaining("'$'");
   }
 
+  /**
+   * Jev 1.14 (OpenAPI snapshot 2026-10-26) adds {@code box} answers; 0.1.0 treats them as unknown.
+   */
+  @Test
+  void boxAnswerIsDroppedButStaysInRawBody() {
+    SystemOneResponse r = parse(Fixtures.read("responses/jev114-box-answer.json"));
+    assertThat(r.answers().ids()).containsExactly("spam");
+    assertThat(r.answers().get("logo")).isEmpty();
+    assertThat(r.rawBody()).contains("\"box\"").contains("\"confidence\"");
+  }
+
   /** The schema requires at least one entry in the answers object. */
   @Test
   void emptyWireAnswersAreRejectedButAllUnknownTypesYieldAnEmptyTypedMap() {

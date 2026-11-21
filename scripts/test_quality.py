@@ -9,10 +9,11 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 from api_compat import compatibility_required
-from check_links import anchors, check_local, targets
-from monitor import digest, ea_version, fetch, inspect_upstream, validate_pins
+from check_links import anchors, check_external, check_local, targets
+from monitor import digest, ea_version, fetch, headers, inspect_upstream, validate_pins
 from prove_gates import find_jdk
 
 
@@ -164,6 +165,28 @@ class MonitorTest(unittest.TestCase):
             (root / pins['schema']['path']).write_text('{}')
             with self.assertRaisesRegex(ValueError, 'hash mismatch'):
                 validate_pins(root, pins)
+
+    def test_github_api_is_authenticated_only_with_a_token_and_only_for_the_api_host(self):
+        api = 'https://api.github.com/repos/aquasecurity/trivy/releases/latest'
+        with patch.dict(os.environ, {'GITHUB_TOKEN': 'secret'}):
+            self.assertEqual(headers(api)['Authorization'], 'Bearer secret')
+            for url in ('https://github.com/Ultonian/jevjavauosdk/commits/main/',
+                        'https://pypi.org/pypi/pre-commit/json', 'https://api.github.com.evil.example/'):
+                self.assertNotIn('Authorization', headers(url))
+        with patch.dict(os.environ, {'GITHUB_TOKEN': ''}):
+            self.assertNotIn('Authorization', headers(api))
+
+    def test_rate_limited_links_are_unverified_not_broken(self):
+        def fetch(url):
+            if 'limited' in url:
+                raise HTTPError(url, 429, 'Too Many Requests', None, None)
+            if 'gone' in url:
+                raise HTTPError(url, 404, 'Not Found', None, None)
+            return b''
+        with patch('check_links.fetch', side_effect=fetch), patch('builtins.print') as out:
+            errors = check_external({'https://x/limited', 'https://x/gone', 'https://x/ok'})
+        self.assertEqual(errors, ['https://x/gone: HTTP Error 404: Not Found'])
+        self.assertIn('::warning::https://x/limited', out.call_args[0][0])
 
     def test_ea_tracks_vendor_and_rejects_no_future_release(self):
         self.assertEqual(ea_version(b'{"tip_version":28,"most_recent_feature_release":27}'), '28-ea')

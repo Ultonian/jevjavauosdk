@@ -7,12 +7,12 @@ The normal gate uses local fixtures and needs no API key. Commands below use a P
 
 ## Setup and checks
 
-Install Python 3.12+ for the contributor tools, `pre-commit` 4.6.2 and
-[Trivy 0.75.0](https://github.com/aquasecurity/trivy/releases/tag/v0.75.0) on your `PATH`.
+Install Python 3.12+ for the contributor tools, `pre-commit` 4.7.0 and
+[Trivy 0.76.1](https://github.com/aquasecurity/trivy/releases/tag/v0.76.1) on your `PATH`.
 The wrapper downloads the pinned Maven distribution; pre-commit installs its pinned hook tools.
 
 ```sh
-pipx install pre-commit==4.6.2
+pipx install pre-commit==4.7.0
 pre-commit install --install-hooks
 ./mvnw verify
 pre-commit run --all-files
