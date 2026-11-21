@@ -47,6 +47,9 @@ class JevApiExceptionTest {
         "400|{\"error\":\"plain\"}|400 plain",
         "400|{\"detail\":\"as string\"}|400 as string",
         "400|{\"detail\":{\"message\":\"nested\"}}|400 nested",
+        // HTTPBadRequestError, documented in the OpenAPI snapshot of 2026-10-26.
+        "400|{\"detail\":{\"error_type\":\"invalid_request\",\"message\":\"Too many choice"
+            + " options\"}}|400 Too many choice options",
         "400|{\"code\":7}|400 {\"code\":7}",
         "400|{\"error\":\"\",\"message\":\"ignored\"}|400 {\"error\":\"\",\"message\":\"ignored\"}",
         "400|{\"detail\":[null,42,{\"msg\":4}]}|400 {\"detail\":[null,42,{\"msg\":4}]}",

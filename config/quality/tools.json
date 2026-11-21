@@ -1,5 +1,5 @@
 {
-  "pre-commit": {"version": "4.6.2", "url": "https://pypi.org/pypi/pre-commit/json"},
-  "trivy": {"version": "0.75.0", "url": "https://api.github.com/repos/aquasecurity/trivy/releases/latest"},
+  "pre-commit": {"version": "4.7.0", "url": "https://pypi.org/pypi/pre-commit/json"},
+  "trivy": {"version": "0.76.1", "url": "https://api.github.com/repos/aquasecurity/trivy/releases/latest"},
   "maven": {"version": "3.10.0", "url": "https://api.github.com/repos/apache/maven/releases/latest"}
 }

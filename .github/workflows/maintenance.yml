@@ -29,6 +29,8 @@ jobs:
       - name: Inspect without changing pins or opening issues
         env:
           SIGNAL: ${{ matrix.signal }}
+          # Read-only token for GitHub API release lookups; unauthenticated calls are rate limited.
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           if [ "$SIGNAL" = links ]; then
             python3 -B scripts/check_links.py --external

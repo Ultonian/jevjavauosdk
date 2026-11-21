@@ -4,6 +4,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.parse import unquote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -58,6 +59,22 @@ def check_local(path, root):
     return errors, external
 
 
+def check_external(urls):
+    """Fetch each URL once; rate limiting (429) leaves a link unverified rather than broken."""
+    errors = []
+    for url in sorted(urls):
+        try:
+            fetch(url)
+        except HTTPError as exc:
+            if exc.code == 429:
+                print(f'::warning::{url}: unverified, {exc}')
+            else:
+                errors.append(f'{url}: {exc}')
+        except (OSError, ValueError) as exc:
+            errors.append(f'{url}: {exc}')
+    return errors
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--external', action='store_true')
@@ -72,11 +89,7 @@ def main():
             errors.extend(problems)
             urls.update(links)
     if args.external:
-        for url in sorted(urls):
-            try:
-                fetch(url)
-            except (OSError, ValueError) as exc:
-                errors.append(f'{url}: {exc}')
+        errors.extend(check_external(urls))
     if errors:
         raise SystemExit('\n'.join(errors))
     print(f'Checked links in {len(files)} Markdown files; external checks: {args.external}')
