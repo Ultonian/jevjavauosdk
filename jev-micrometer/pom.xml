@@ -11,6 +11,7 @@
   <artifactId>jev-micrometer</artifactId>
   <name>Jev Java Unofficial SDK - Micrometer integration</name>
   <description>Micrometer metrics for the Jev client: call and attempt timers, token counters, and allowlisted per-question confidence summaries.</description>
+  <url>https://github.com/Ultonian/jevjavauosdk</url>
   <properties>
     <jacoco.line.minimum>0.95</jacoco.line.minimum>
   </properties>

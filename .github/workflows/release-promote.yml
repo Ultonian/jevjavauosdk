@@ -1,0 +1,148 @@
+name: Release promotion
+
+# Takes a qualified candidate (by workflow run id) and a stable tag, verifies they describe the same
+# commit and bundle, then uploads the bundle to the Central Portal as a user-managed deployment
+# (step "validate") and, on a second explicit dispatch, publishes it (step "publish"). It never
+# rebuilds; a rerun resumes from the recorded deployment state instead of uploading again, and
+# refuses to resume a deployment that was recorded for a different bundle or candidate.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Stable release tag at the candidate commit, e.g. v0.1.0"
+        required: true
+      candidate_run_id:
+        description: "Run id of the 'Release candidate' workflow that produced the bundle"
+        required: true
+      step:
+        description: "validate: upload and wait for Portal validation. publish: publish a validated deployment"
+        required: true
+        type: choice
+        default: validate
+        options: [validate, publish]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: release-promote-${{ inputs.tag }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    # Explicit bash enables pipefail; the implicit shell is only `bash -e`.
+    shell: bash
+
+jobs:
+  promote:
+    name: ${{ inputs.step }} ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+      - name: Verify the tag is annotated and at a candidate-eligible commit
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          git fetch --no-tags origin "refs/tags/$TAG:refs/tags/$TAG" --force
+          if [ "$(git cat-file -t "refs/tags/$TAG")" != tag ]; then
+            echo "::error::$TAG must be an annotated tag"; exit 1
+          fi
+          echo "commit=$(git rev-parse "refs/tags/$TAG^{commit}")" >> "$GITHUB_ENV"
+          echo "version=${TAG#v}" >> "$GITHUB_ENV"
+      - name: Fetch the candidate and confirm its run succeeded on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.candidate_run_id }}
+        run: |
+          gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json conclusion,headSha,workflowName,status > run.json
+          python3 - "$commit" <<'EOF'
+          import json, sys
+          run = json.load(open('run.json'))
+          problems = [f'{k}={run[k]!r}' for k, want in (('workflowName', 'Release candidate'),
+                                                        ('status', 'completed'), ('conclusion', 'success'),
+                                                        ('headSha', sys.argv[1])) if run.get(k) != want]
+          if problems:
+              sys.exit('Candidate run does not qualify: ' + ', '.join(problems))
+          EOF
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'candidate-*' --dir downloaded
+          mv downloaded/candidate-* candidate
+      - name: Verify the bundle against the manifest and the tag
+        run: |
+          python3 - <<'EOF'
+          import hashlib, json, os, sys
+          manifest = json.load(open('candidate/manifest.json'))
+          digest = hashlib.sha256(open('candidate/central-bundle.zip', 'rb').read()).hexdigest()
+          checks = {'commit': (manifest['commit'], os.environ['commit']),
+                    'version': (manifest['version'], os.environ['version']),
+                    'bundle sha256': (manifest['bundle']['sha256'], digest)}
+          bad = [f'{name}: manifest {a} vs actual {b}' for name, (a, b) in checks.items() if a != b]
+          if bad:
+              sys.exit('Candidate does not match the tag:\n' + '\n'.join(bad))
+          print('Candidate matches tag', os.environ['version'], 'at', os.environ['commit'])
+          EOF
+          python3 -B scripts/release_bundle.py check candidate/central-bundle.zip --version "$version" \
+            --sbom candidate/bom.json
+      - name: Restore the deployment record from an earlier promotion run, if any
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=deployment-$TAG&per_page=100" \
+            --jq '[.artifacts[] | select(.expired | not)] | sort_by(.created_at) | last | .workflow_run.id // empty')
+          if [ -n "$run_id" ]; then
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "deployment-$TAG" --dir deployment
+            echo "Resuming deployment recorded by run $run_id:"; cat deployment/deployment.json
+          else
+            mkdir -p deployment; echo "No earlier deployment recorded for $TAG"
+          fi
+      # Runs for both steps: with a restored record it uploads nothing, but it binds the record to
+      # this bundle, Portal and candidate before `publish` can act on it.
+      - name: Upload to the Portal and wait for validation (no publication)
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_TOKEN: ${{ secrets.CENTRAL_TOKEN }}
+          RUN_ID: ${{ inputs.candidate_run_id }}
+        run: |
+          python3 -B scripts/central_publish.py --record deployment/deployment.json upload \
+            candidate/central-bundle.zip --name "jev-parent $version $commit run $RUN_ID" \
+            --candidate "run $RUN_ID commit $commit version $version" \
+            --expect-sha256 "$(python3 -c "import json; print(json.load(open('candidate/manifest.json'))['bundle']['sha256'])")"
+      - name: Publish the validated deployment
+        if: inputs.step == 'publish'
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_TOKEN: ${{ secrets.CENTRAL_TOKEN }}
+        run: python3 -B scripts/central_publish.py --record deployment/deployment.json publish
+      - name: Retain the deployment record
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: deployment-${{ inputs.tag }}
+          path: deployment/
+          if-no-files-found: ignore
+          retention-days: 90
+          overwrite: true
+      - name: Summarize
+        if: always()
+        env:
+          STEP: ${{ inputs.step }}
+          TAG: ${{ inputs.tag }}
+          RUN_ID: ${{ inputs.candidate_run_id }}
+        run: |
+          {
+            echo "## $STEP $TAG"
+            echo
+            echo "- Commit: \`$commit\`"
+            echo "- Candidate run: $RUN_ID"
+            if [ -f deployment/deployment.json ]; then
+              echo "- Deployment: \`$(python3 -c "import json; print(json.load(open('deployment/deployment.json'))['deploymentId'])")\`"
+            else
+              echo "- Deployment: none recorded"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
