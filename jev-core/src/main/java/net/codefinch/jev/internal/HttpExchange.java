@@ -79,7 +79,7 @@ final class HttpExchange {
       diagnostics.log(Level.INFO, () -> spec.endpoint() + " aborted by caller");
       throw cancelled(spec, e);
     } catch (ExecutionException e) {
-      JevException failure = mapTransportFailure(spec, e.getCause());
+      JevException failure = mapTransportFailure(spec, e.getCause(), budget);
       diagnostics.log(
           Level.INFO, () -> spec.endpoint() + " <- " + failure.getClass().getSimpleName());
       throw failure;
@@ -144,12 +144,15 @@ final class HttpExchange {
     return builder.build();
   }
 
-  private JevException mapTransportFailure(CallSpec<?> spec, Throwable cause) {
+  private JevException mapTransportFailure(CallSpec<?> spec, Throwable cause, Duration budget) {
     if (cause instanceof CompletionException && cause.getCause() != null) {
       cause = cause.getCause();
     }
     if (cause instanceof HttpConnectTimeoutException || cause instanceof HttpTimeoutException) {
-      return new JevTimeoutException(spec.endpoint() + ": " + cause.getMessage(), cause);
+      // The JDK's request timeout shares the attempt budget and races the wait above; report both
+      // outcomes with the same message so callers and tests see one attempt-timeout contract.
+      return new JevTimeoutException(
+          spec.endpoint() + ": attempt timed out after " + budget.toMillis() + " ms", cause);
     }
     if (cause instanceof IOException) {
       return new JevConnectionException(spec.endpoint() + ": " + cause.getMessage(), cause);
